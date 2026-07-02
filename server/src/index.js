@@ -36,6 +36,22 @@ const searchRoutes = require('./routes/search');
 
 const app = express();
 
+// ── HTTP + Socket.io server ───────────────────────────────────────────────────
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  pingTimeout: 60000,
+});
+
+// Attach io to every request so controllers can emit events
+app.use((req, _res, next) => { req.io = io; next(); });
+
+
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(
   helmet({
@@ -162,20 +178,7 @@ app.use((req, res) => {
 // ── Global error handler ──────────────────────────────────────────────────────
 app.use(errorHandler);
 
-// ── HTTP + Socket.io server ───────────────────────────────────────────────────
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
-  pingTimeout: 60000,
-});
-
-// Attach io to every request so controllers can emit events
-app.use((req, _res, next) => { req.io = io; next(); });
+// Server and Socket.io instances are initialized above routes to ensure req.io is available.
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 const start = async () => {
