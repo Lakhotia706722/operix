@@ -50,8 +50,8 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError);
-        // Redirect to login
-        window.location.href = '/login';
+        localStorage.removeItem('taskflow-auth');
+        window.dispatchEvent(new Event('auth:unauthorized'));
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

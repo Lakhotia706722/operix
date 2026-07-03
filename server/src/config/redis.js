@@ -40,6 +40,9 @@ const connectRedis = async () => {
     logger.info('✅ Redis connected');
   } catch (err) {
     logger.warn('⚠️  Redis not available - using in-memory fallback for caching and rate limiting');
+    if (redisClient) redisClient.disconnect();
+    if (subscriberClient) subscriberClient.disconnect();
+    if (publisherClient) publisherClient.disconnect();
     redisClient = null;
     subscriberClient = null;
     publisherClient = null;

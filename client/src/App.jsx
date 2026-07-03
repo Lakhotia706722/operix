@@ -57,6 +57,15 @@ function App() {
     if (!isAuthenticated) disconnect();
   }, [isAuthenticated, disconnect]);
 
+  // Handle unauthorized events from axios interceptor
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      useAuthStore.setState({ user: null, isAuthenticated: false });
+    };
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
+
   return (
     <ErrorBoundary>
       <div className="flex h-screen overflow-hidden bg-[var(--bg-primary)]">

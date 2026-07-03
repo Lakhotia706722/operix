@@ -1,4 +1,4 @@
-# Security - NEVER commit these files
+# ─── Secrets & Environment ───────────────────────────────────────────────────
 .env
 .env.*
 !.env.example
@@ -9,33 +9,20 @@
 secrets.txt
 credentials.json
 
-# Dependencies
+# ─── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
-package-lock.json
+.pnp
+.pnp.js
 
-# Build output
+# ─── Build Output ─────────────────────────────────────────────────────────────
 dist/
 build/
-*.log
+.next/
+.nuxt/
+.output/
+out/
 
-# OS files
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
-
-# IDE
-.vscode/
-.idea/
-*.sublime-*
-.history/
-
-# Testing
-coverage/
-.nyc_output/
-
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 logs/
 *.log
 npm-debug.log*
@@ -44,21 +31,49 @@ yarn-error.log*
 lerna-debug.log*
 pnpm-debug.log*
 
-# Runtime data
+# ─── Testing & Coverage ───────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+
+# ─── OS Files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-*
+.history/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ─── Runtime Data ─────────────────────────────────────────────────────────────
 pids/
 *.pid
 *.seed
 *.pid.lock
 
-# Backups
+# ─── Package Manager ──────────────────────────────────────────────────────────
+package-lock.json
+yarn.lock
+.yarn/
+.pnpm-store/
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.dockerignore
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+.cache/
+.parcel-cache/
+temp/
+tmp/
 backups/
 *.backup
 *.bak
-
-# Docker
-.dockerignore
-
-# Misc
-.cache/
-temp/
-tmp/
