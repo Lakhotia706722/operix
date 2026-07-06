@@ -16,6 +16,14 @@ export const useTask = (boardId, taskId) =>
     queryKey: queryKeys.tasks.detail(taskId),
     queryFn: () => tasksApi.getOne(boardId, taskId),
     enabled: !!boardId && !!taskId,
+    retry: false,
+    onError: (err) => {
+      // If task not found (404), it may have been deleted by another user
+      if (err.response?.status === 404) {
+        // Let the component handle this case
+        throw err;
+      }
+    },
   });
 
 export const useTaskComments = (boardId, taskId, page = 1) =>
@@ -50,7 +58,11 @@ export const useUpdateTask = (boardId, taskId) => {
     },
     onError: (err, _, context) => {
       if (context?.prev) queryClient.setQueryData(queryKeys.tasks.detail(taskId), context.prev);
-      toast.error(err.response?.data?.error?.message || 'Failed to update task');
+      if (err.response?.data?.error?.code === 'VERSION_CONFLICT') {
+        toast.error('This task was modified by another user. Please refresh.');
+      } else {
+        toast.error(err.response?.data?.error?.message || 'Failed to update task');
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.boards.tasks(boardId) });

@@ -90,17 +90,27 @@ exports.deleteBoard = asyncHandler(async (req, res, next) => {
     return next(new AppError('Only the board owner can delete it.', 403, 'INSUFFICIENT_ROLE'));
   }
 
+  const board = await Board.findById(req.params.boardId).lean();
   await Promise.all([
     Board.findByIdAndDelete(req.params.boardId),
     Task.deleteMany({ board: req.params.boardId }),
   ]);
 
   await getRedis().del(`board:members:${req.params.boardId}`);
-  res.json({ success: true, message: 'Board deleted.' });
+
+  // Emit socket event to notify all board members
+  req.io?.to(`board:${req.params.boardId}`).emit('board:deleted', {
+    boardId: req.params.boardId,
+  });
+
+  res.json({ success: true, data: { board } });
 });
 
 exports.archiveBoard = asyncHandler(async (req, res) => {
-  await Board.findByIdAndUpdate(req.params.boardId, { isArchived: true });
+  const board = await Board.findByIdAndUpdate(req.params.boardId, { isArchived: true }, { new: true })
+    .populate('members.user', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
 
   await activityService.log({
     boardId: req.params.boardId,
@@ -108,7 +118,7 @@ exports.archiveBoard = asyncHandler(async (req, res) => {
     action: 'board_archived',
   });
 
-  res.json({ success: true, message: 'Board archived.' });
+  res.json({ success: true, data: { board } });
 });
 
 exports.starBoard = asyncHandler(async (req, res) => {
@@ -120,8 +130,11 @@ exports.starBoard = asyncHandler(async (req, res) => {
     ? { $pull: { isStarred: userId } }
     : { $addToSet: { isStarred: userId } };
 
-  await Board.findByIdAndUpdate(req.params.boardId, update);
-  res.json({ success: true, data: { starred: !isStarred } });
+  const updatedBoard = await Board.findByIdAndUpdate(req.params.boardId, update, { new: true })
+    .populate('members.user', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
+  res.json({ success: true, data: { board: updatedBoard, starred: !isStarred } });
 });
 
 // ─── Members ──────────────────────────────────────────────────────────────────
@@ -208,9 +221,12 @@ exports.removeMember = asyncHandler(async (req, res, next) => {
     return next(new AppError('Insufficient permissions.', 403, 'INSUFFICIENT_ROLE'));
   }
 
-  await Board.findByIdAndUpdate(req.params.boardId, {
+  const board = await Board.findByIdAndUpdate(req.params.boardId, {
     $pull: { members: { user: userId } },
-  });
+  }, { new: true })
+    .populate('members.user', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
 
   await getRedis().del(`board:members:${req.params.boardId}`);
   await activityService.log({
@@ -220,7 +236,7 @@ exports.removeMember = asyncHandler(async (req, res, next) => {
     meta: { userId },
   });
 
-  res.json({ success: true, message: 'Member removed.' });
+  res.json({ success: true, data: { board } });
 });
 
 // ─── Columns ──────────────────────────────────────────────────────────────────
@@ -265,7 +281,11 @@ exports.deleteColumn = asyncHandler(async (req, res, next) => {
   // Archive tasks in deleted column
   await Task.updateMany({ board: board._id, columnId }, { isArchived: true });
 
-  res.json({ success: true, message: 'Column deleted.' });
+  const updatedBoard = await Board.findById(req.params.boardId)
+    .populate('members.user', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
+  res.json({ success: true, data: { board: updatedBoard } });
 });
 
 exports.reorderColumns = asyncHandler(async (req, res) => {
@@ -308,7 +328,12 @@ exports.deleteLabel = asyncHandler(async (req, res, next) => {
   await board.save();
   // Remove label from tasks
   await Task.updateMany({ board: board._id }, { $pull: { labels: labelId } });
-  res.json({ success: true, message: 'Label deleted.' });
+
+  const updatedBoard = await Board.findById(req.params.boardId)
+    .populate('members.user', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
+  res.json({ success: true, data: { board: updatedBoard } });
 });
 
 // ─── Activity & Analytics ─────────────────────────────────────────────────────

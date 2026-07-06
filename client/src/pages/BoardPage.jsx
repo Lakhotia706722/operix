@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { BarChart2, Users } from 'lucide-react';
 import { useBoard } from '../hooks/useBoards';
@@ -6,6 +6,8 @@ import { useBoardTasksList } from '../hooks/useTasks';
 import useSocketStore from '../store/useSocketStore';
 import useUIStore from '../store/useUIStore';
 import useAuthStore from '../store/useAuthStore';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../api/queryKeys';
 import Navbar from '../components/layout/Navbar';
 import KanbanBoard from '../components/kanban/KanbanBoard';
 import FilterBar from '../components/filters/FilterBar';
@@ -20,10 +22,25 @@ const BoardPage = () => {
   const { boardId } = useParams();
   const { user } = useAuthStore();
   const { filters, activeModal, activeTaskId, closeModal } = useUIStore();
-  const { joinBoard, leaveBoard, connect, isConnected, onlineMembers } = useSocketStore();
+  const { joinBoard, leaveBoard, connect, isConnected, onlineMembers, setReconnectSync } = useSocketStore();
+  const queryClient = useQueryClient();
 
   const { data: board, isLoading: boardLoading } = useBoard(boardId);
   const { data: tasks = [], isLoading: tasksLoading } = useBoardTasksList(boardId, {});
+
+  // Re-sync function for reconnect
+  const handleReconnectSync = useCallback((syncBoardId) => {
+    if (syncBoardId === boardId) {
+      // Invalidate queries to re-fetch fresh data
+      queryClient.invalidateQueries({ queryKey: queryKeys.boards.detail(boardId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.boards.tasks(boardId, {}) });
+    }
+  }, [boardId, queryClient]);
+
+  // Set reconnect sync callback
+  useEffect(() => {
+    setReconnectSync(handleReconnectSync);
+  }, [handleReconnectSync, setReconnectSync]);
 
   // Connect socket + join board room
   useEffect(() => {

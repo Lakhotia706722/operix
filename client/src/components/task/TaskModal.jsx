@@ -8,9 +8,11 @@ import MDEditor from '@uiw/react-md-editor';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import toast from 'react-hot-toast';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useTask, useUpdateTask, useDeleteTask, useAddComment, useTaskComments } from '../../hooks/useTasks';
 import { tasksApi } from '../../api/tasks';
+import { queryKeys } from '../../api/queryKeys';
 import useUIStore from '../../store/useUIStore';
 import useAuthStore from '../../store/useAuthStore';
 import useSocketStore from '../../store/useSocketStore';
@@ -28,8 +30,9 @@ const TaskModal = ({ boardId, taskId }) => {
   const { closeModal } = useUIStore();
   const { user } = useAuthStore();
   const { emitTypingStart, emitTypingStop } = useSocketStore();
+  const queryClient = useQueryClient();
 
-  const { data: task, isLoading } = useTask(boardId, taskId);
+  const { data: task, isLoading, error } = useTask(boardId, taskId);
   const updateTask = useUpdateTask(boardId, taskId);
   const deleteTask = useDeleteTask(boardId);
   const addComment = useAddComment(boardId, taskId);
@@ -48,6 +51,21 @@ const TaskModal = ({ boardId, taskId }) => {
   const titleInitialized = useRef(false);
   const descInitialized = useRef(false);
 
+  // Handle task deletion by another user
+  useEffect(() => {
+    if (error?.response?.status === 404) {
+      toast.error('This task was deleted by another user');
+      closeModal();
+    }
+  }, [error, closeModal]);
+
+  // Handle version conflict - refresh task data
+  const handleVersionConflict = useCallback(() => {
+    // Refetch task data to get latest version
+    queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+    toast.success('Task refreshed with latest changes');
+  }, [taskId, queryClient]);
+
   // Sync task data into local state
   useEffect(() => {
     if (task && !titleInitialized.current) {
@@ -62,21 +80,31 @@ const TaskModal = ({ boardId, taskId }) => {
   useEffect(() => {
     if (!titleInitialized.current || !debouncedTitle || debouncedTitle === task?.title) return;
     setSaveStatus('saving');
-    updateTask.mutate({ title: debouncedTitle }, {
+    updateTask.mutate({ title: debouncedTitle, version: task?.version }, {
       onSuccess: () => { setSaveStatus('saved'); setTimeout(() => setSaveStatus(''), 2000); },
-      onError: () => setSaveStatus(''),
+      onError: (err) => {
+        setSaveStatus('');
+        if (err.response?.data?.error?.code === 'VERSION_CONFLICT') {
+          handleVersionConflict();
+        }
+      },
     });
-  }, [debouncedTitle]);
+  }, [debouncedTitle, task?.version, updateTask, handleVersionConflict]);
 
   // Auto-save description
   useEffect(() => {
     if (!descInitialized.current || debouncedDesc === task?.description) return;
     setSaveStatus('saving');
-    updateTask.mutate({ description: debouncedDesc }, {
+    updateTask.mutate({ description: debouncedDesc, version: task?.version }, {
       onSuccess: () => { setSaveStatus('saved'); setTimeout(() => setSaveStatus(''), 2000); },
-      onError: () => setSaveStatus(''),
+      onError: (err) => {
+        setSaveStatus('');
+        if (err.response?.data?.error?.code === 'VERSION_CONFLICT') {
+          handleVersionConflict();
+        }
+      },
     });
-  }, [debouncedDesc]);
+  }, [debouncedDesc, task?.version, updateTask, handleVersionConflict]);
 
   const handleFieldUpdate = (field, value) => {
     updateTask.mutate({ [field]: value });

@@ -62,6 +62,10 @@ const KanbanBoard = ({ board, tasks = [], boardId }) => {
     const task = tasks.find((t) => t._id === taskId);
     if (!task) return;
 
+    // Store previous state for rollback
+    const previousColumnId = task.columnId;
+    const previousPosition = task.position;
+
     // Determine target column (over could be a column id or a task id)
     let toColumnId = over.id;
     const overTask = tasks.find((t) => t._id === over.id);
@@ -84,8 +88,12 @@ const KanbanBoard = ({ board, tasks = [], boardId }) => {
     try {
       await tasksApi.move(boardId, taskId, { columnId: toColumnId, position: newPosition });
     } catch {
-      // Rollback
-      queryClient.invalidateQueries({ queryKey: queryKeys.boards.tasks(boardId, {}) });
+      // Rollback to previous state (no network request)
+      queryClient.setQueryData(queryKeys.boards.tasks(boardId, {}), (old) =>
+        old?.map((t) =>
+          t._id === taskId ? { ...t, columnId: previousColumnId, position: previousPosition } : t
+        )
+      );
       toast.error('Failed to move task');
     }
   };

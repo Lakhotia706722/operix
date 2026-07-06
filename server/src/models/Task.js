@@ -67,6 +67,8 @@ const taskSchema = new Schema(
       frequency: { type: String, enum: ['daily', 'weekly', 'monthly', null], default: null },
       nextDue: { type: Date, default: null },
     },
+    // Optimistic concurrency control
+    version: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
@@ -76,5 +78,7 @@ taskSchema.index({ board: 1, columnId: 1, position: 1 });
 taskSchema.index({ board: 1, isArchived: 1 });
 taskSchema.index({ assignedTo: 1, dueDate: 1 });
 taskSchema.index({ dueDate: 1, isArchived: 1 }); // for due-date reminders cron
+taskSchema.index({ status: 1 });
+taskSchema.index({ priority: 1 });
 
 module.exports = mongoose.model('Task', taskSchema);

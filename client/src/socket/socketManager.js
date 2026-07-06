@@ -1,83 +1,124 @@
 /**
  * Socket event handler that wires socket.io events to React Query cache + Zustand store.
  * Call registerSocketHandlers(socket, queryClient, boardId, currentUserId) when joining a board.
+ *
+ * Note: Handlers extract boardId from event payloads to avoid stale closure issues.
+ * This ensures handlers work correctly even if boardId changes between registrations.
  */
 import { queryKeys } from '../api/queryKeys';
 
 export const registerSocketHandlers = (socket, queryClient, boardId, currentUserId) => {
-  const boardTasksKey = queryKeys.boards.tasks(boardId, {});
+  // Store handler references for cleanup
+  const handlers = {};
 
   // ── Task events ────────────────────────────────────────────────────────────
 
-  socket.on('task:created', ({ task }) => {
+  handlers['task:created'] = ({ task, createdBy }) => {
+    // Skip if created by current user (optimistic update already applied)
+    if (createdBy === currentUserId) return;
+
+    const taskBoardId = task.board || task.boardId || boardId;
+    const boardTasksKey = queryKeys.boards.tasks(taskBoardId, {});
     queryClient.setQueryData(boardTasksKey, (old) =>
       old ? [...old, task] : [task]
     );
-  });
+  };
 
-  socket.on('task:updated', ({ taskId, changes }) => {
-    queryClient.setQueryData(boardTasksKey, (old) =>
-      old?.map((t) => (t._id === taskId ? { ...t, ...changes } : t))
-    );
-    // Also update detail cache
-    queryClient.setQueryData(queryKeys.tasks.detail(taskId), (old) =>
-      old ? { ...old, ...changes } : old
-    );
-  });
+  handlers['task:updated'] = ({ taskId, changes, task, updatedBy }) => {
+    // Skip if updated by current user (optimistic update already applied)
+    if (updatedBy === currentUserId) return;
 
-  socket.on('task:moved', ({ taskId, toColumn, position, movedBy }) => {
+    // If full task is provided, use it; otherwise apply changes
+    if (task) {
+      const taskBoardId = task.board || task.boardId || boardId;
+      const boardTasksKey = queryKeys.boards.tasks(taskBoardId, {});
+      queryClient.setQueryData(boardTasksKey, (old) =>
+        old?.map((t) => (t._id === taskId ? task : t))
+      );
+      queryClient.setQueryData(queryKeys.tasks.detail(taskId), task);
+    } else {
+      const boardTasksKey = queryKeys.boards.tasks(boardId, {});
+      queryClient.setQueryData(boardTasksKey, (old) =>
+        old?.map((t) => (t._id === taskId ? { ...t, ...changes } : t))
+      );
+      queryClient.setQueryData(queryKeys.tasks.detail(taskId), (old) =>
+        old ? { ...old, ...changes } : old
+      );
+    }
+  };
+
+  handlers['task:moved'] = ({ taskId, toColumn, position, movedBy, board: eventBoardId }) => {
     if (movedBy === currentUserId) return; // already applied optimistically
+    const taskBoardId = eventBoardId || boardId;
+    const boardTasksKey = queryKeys.boards.tasks(taskBoardId, {});
     queryClient.setQueryData(boardTasksKey, (old) =>
       old?.map((t) =>
         t._id === taskId ? { ...t, columnId: toColumn, position } : t
       )
     );
-  });
+  };
 
-  socket.on('task:deleted', ({ taskId }) => {
+  handlers['task:deleted'] = ({ taskId, board: eventBoardId, deletedBy }) => {
+    // Skip if deleted by current user (optimistic update already applied)
+    if (deletedBy === currentUserId) return;
+
+    const taskBoardId = eventBoardId || boardId;
+    const boardTasksKey = queryKeys.boards.tasks(taskBoardId, {});
     queryClient.setQueryData(boardTasksKey, (old) =>
       old?.filter((t) => t._id !== taskId)
     );
-  });
+  };
 
-  socket.on('task:archived', ({ taskId }) => {
+  handlers['task:archived'] = ({ taskId, board: eventBoardId, archivedBy }) => {
+    // Skip if archived by current user (optimistic update already applied)
+    if (archivedBy === currentUserId) return;
+
+    const taskBoardId = eventBoardId || boardId;
+    const boardTasksKey = queryKeys.boards.tasks(taskBoardId, {});
     queryClient.setQueryData(boardTasksKey, (old) =>
       old?.filter((t) => t._id !== taskId)
     );
-  });
+  };
 
   // ── Comment events ─────────────────────────────────────────────────────────
 
-  socket.on('comment:added', ({ taskId, comment }) => {
+  handlers['comment:added'] = ({ taskId, comment }) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.tasks.comments(taskId, 1) });
-  });
+  };
 
-  socket.on('comment:updated', ({ commentId, content }) => {
+  handlers['comment:updated'] = ({ commentId, content }) => {
     // Invalidate comment queries that may contain this comment
     queryClient.invalidateQueries({ queryKey: ['tasks'] });
-  });
+  };
 
-  socket.on('comment:deleted', ({ commentId, taskId }) => {
+  handlers['comment:deleted'] = ({ commentId, taskId }) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.tasks.comments(taskId, 1) });
-  });
+  };
 
   // ── Board events ───────────────────────────────────────────────────────────
 
-  socket.on('board:updated', ({ board }) => {
-    queryClient.setQueryData(queryKeys.boards.detail(boardId), (old) =>
+  handlers['board:updated'] = ({ board }) => {
+    const eventBoardId = board._id || boardId;
+    queryClient.setQueryData(queryKeys.boards.detail(eventBoardId), (old) =>
       old ? { ...old, ...board } : board
     );
+  };
+
+  handlers['board:deleted'] = ({ boardId: deletedBoardId }) => {
+    // Remove board from cache
+    queryClient.removeQueries({ queryKey: queryKeys.boards.detail(deletedBoardId) });
+    queryClient.removeQueries({ queryKey: queryKeys.boards.tasks(deletedBoardId, {}) });
+  };
+
+  // Register all handlers
+  Object.entries(handlers).forEach(([event, handler]) => {
+    socket.on(event, handler);
   });
 
+  // Return cleanup function
   return () => {
-    socket.off('task:created');
-    socket.off('task:updated');
-    socket.off('task:moved');
-    socket.off('task:deleted');
-    socket.off('task:archived');
-    socket.off('comment:added');
-    socket.off('comment:updated');
-    socket.off('comment:deleted');
-    socket.off('board:updated');
+    Object.keys(handlers).forEach((event) => {
+      socket.off(event, handlers[event]);
+    });
   };
 };

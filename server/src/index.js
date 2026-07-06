@@ -79,16 +79,21 @@ app.use(
   })
 );
 
-const allowedOrigins = process.env.CLIENT_URL 
+const allowedOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173'];
+  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:61811'];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
+      // In production, reject requests with no origin (prevent direct API access)
+      if (process.env.NODE_ENV === 'production' && !origin) {
+        return callback(new Error('Origin header required in production'), false);
+      }
+
+      // Allow requests with no origin in development (mobile apps, Postman, etc.)
       if (!origin) return callback(null, true);
-      
+
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -117,6 +122,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────
+// Basic health check (no auth required for load balancers)
 app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
@@ -125,43 +131,63 @@ app.get('/health', async (req, res) => {
     environment: process.env.NODE_ENV,
     version: '1.0.0',
   };
+  res.json(health);
+});
 
-  // Detailed health check for monitoring systems
-  if (req.query.detailed === 'true') {
-    try {
-      // Check MongoDB
-      const mongoose = require('mongoose');
-      const mongoStatus = mongoose.connection.readyState;
-      health.mongodb = mongoStatus === 1 ? 'connected' : 'disconnected';
-
-      // Check Redis
-      const { getRedis } = require('./config/redis');
-      const redis = getRedis();
-      if (redis) {
-        await redis.ping();
-        health.redis = 'connected';
-      } else {
-        health.redis = 'not_configured';
-      }
-
-      // Memory usage
-      const memUsage = process.memoryUsage();
-      health.memory = {
-        heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
-        heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
-        rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
-      };
-
-      res.json(health);
-    } catch (error) {
-      health.status = 'degraded';
-      health.error = error.message;
-      res.status(503).json(health);
-    }
+// Detailed health check (requires auth in production to protect system info)
+app.get('/health/detailed', async (req, res) => {
+  // In production, require authentication
+  if (process.env.NODE_ENV === 'production') {
+    const authMiddleware = require('./middlewares/auth');
+    // Apply auth middleware inline
+    authMiddleware(req, res, async () => {
+      await sendDetailedHealth(req, res);
+    });
   } else {
-    res.json(health);
+    await sendDetailedHealth(req, res);
   }
 });
+
+async function sendDetailedHealth(req, res) {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV,
+    version: '1.0.0',
+  };
+
+  try {
+    // Check MongoDB
+    const mongoose = require('mongoose');
+    const mongoStatus = mongoose.connection.readyState;
+    health.mongodb = mongoStatus === 1 ? 'connected' : 'disconnected';
+
+    // Check Redis
+    const { getRedis } = require('./config/redis');
+    const redis = getRedis();
+    if (redis) {
+      await redis.ping();
+      health.redis = 'connected';
+    } else {
+      health.redis = 'not_configured';
+    }
+
+    // Memory usage
+    const memUsage = process.memoryUsage();
+    health.memory = {
+      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+      rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+    };
+
+    res.json(health);
+  } catch (error) {
+    health.status = 'degraded';
+    health.error = error.message;
+    res.status(503).json(health);
+  }
+}
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);

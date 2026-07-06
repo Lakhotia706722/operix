@@ -48,5 +48,7 @@ const boardSchema = new Schema(
 // Index for fast member lookup
 boardSchema.index({ 'members.user': 1 });
 boardSchema.index({ createdBy: 1 });
+boardSchema.index({ isArchived: 1 });
+boardSchema.index({ isStarred: 1 });
 
 module.exports = mongoose.model('Board', boardSchema);

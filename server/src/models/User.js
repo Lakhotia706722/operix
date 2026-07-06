@@ -26,6 +26,10 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Indexes for common queries
+userSchema.index({ lastSeen: 1 });
+userSchema.index({ isEmailVerified: 1 });
+
 // Hash password before saving
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

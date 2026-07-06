@@ -44,7 +44,7 @@ exports.createTask = asyncHandler(async (req, res) => {
     .populate('createdBy', 'name avatar')
     .lean();
 
-  req.io?.to(`board:${req.params.boardId}`).emit('task:created', { task: populated });
+  req.io?.to(`board:${req.params.boardId}`).emit('task:created', { task: populated, createdBy: req.user._id });
 
   res.status(201).json({ success: true, data: { task: populated } });
 });
@@ -65,14 +65,23 @@ exports.getTask = asyncHandler(async (req, res, next) => {
 exports.updateTask = asyncHandler(async (req, res, next) => {
   const allowedFields = [
     'title', 'description', 'priority', 'status', 'dueDate', 'startDate',
-    'estimatedHours', 'labels', 'columnId',
+    'estimatedHours', 'labels', 'columnId', 'version',
   ];
 
   const updates = {};
   allowedFields.forEach((f) => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
 
-  const oldTask = await Task.findById(req.params.taskId).lean();
+  const oldTask = await Task.findById(req.params.taskId).select('version').lean();
   if (!oldTask) return next(new AppError('Task not found.', 404, 'TASK_NOT_FOUND'));
+
+  // Check version if provided (optimistic concurrency control)
+  if (updates.version !== undefined && updates.version !== oldTask.version) {
+    return next(new AppError('Task was modified by another user. Please refresh and try again.', 409, 'VERSION_CONFLICT'));
+  }
+
+  // Always increment version on update
+  updates.$inc = { version: 1 };
+  delete updates.version; // Remove version from direct updates, use $inc instead
 
   const task = await Task.findByIdAndUpdate(req.params.taskId, updates, {
     new: true, runValidators: true,
@@ -102,7 +111,7 @@ exports.updateTask = asyncHandler(async (req, res, next) => {
   }
 
   req.io?.to(`board:${req.params.boardId}`).emit('task:updated', {
-    taskId: task._id, changes: updates,
+    taskId: task._id, changes: updates, updatedBy: req.user._id,
   });
 
   res.json({ success: true, data: { task } });
@@ -122,16 +131,16 @@ exports.deleteTask = asyncHandler(async (req, res, next) => {
   });
 
   req.io?.to(`board:${req.params.boardId}`).emit('task:deleted', {
-    taskId: task._id, columnId: task.columnId,
+    taskId: task._id, columnId: task.columnId, deletedBy: req.user._id,
   });
 
-  res.json({ success: true, message: 'Task deleted.' });
+  res.json({ success: true, data: { task } });
 });
 
 exports.moveTask = asyncHandler(async (req, res) => {
-  const { columnId, position } = req.body;
+  const { columnId, position, moveId } = req.body;
   const task = await taskService.moveTask(
-    req.params.taskId, req.user._id, columnId, position, req.io
+    req.params.taskId, req.user._id, columnId, position, req.io, moveId
   );
   res.json({ success: true, data: { task } });
 });
@@ -141,7 +150,7 @@ exports.archiveTask = asyncHandler(async (req, res, next) => {
     { _id: req.params.taskId, board: req.params.boardId },
     { isArchived: true, archivedBy: req.user._id, archivedAt: new Date() },
     { new: true }
-  );
+  ).populate('assignedTo', 'name avatar').populate('createdBy', 'name avatar').lean();
   if (!task) return next(new AppError('Task not found.', 404, 'TASK_NOT_FOUND'));
 
   await activityService.log({
@@ -149,8 +158,8 @@ exports.archiveTask = asyncHandler(async (req, res, next) => {
     taskId: task._id, meta: { taskTitle: task.title },
   });
 
-  req.io?.to(`board:${req.params.boardId}`).emit('task:archived', { taskId: task._id });
-  res.json({ success: true, message: 'Task archived.' });
+  req.io?.to(`board:${req.params.boardId}`).emit('task:archived', { taskId: task._id, archivedBy: req.user._id });
+  res.json({ success: true, data: { task } });
 });
 
 exports.toggleWatch = asyncHandler(async (req, res) => {
@@ -162,8 +171,11 @@ exports.toggleWatch = asyncHandler(async (req, res) => {
     ? { $pull: { watchedBy: userId } }
     : { $addToSet: { watchedBy: userId } };
 
-  await Task.findByIdAndUpdate(req.params.taskId, update);
-  res.json({ success: true, data: { watching: !isWatching } });
+  const updatedTask = await Task.findByIdAndUpdate(req.params.taskId, update, { new: true })
+    .populate('assignedTo', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
+  res.json({ success: true, data: { task: updatedTask, watching: !isWatching } });
 });
 
 exports.assignUser = asyncHandler(async (req, res) => {
@@ -305,7 +317,11 @@ exports.deleteAttachment = asyncHandler(async (req, res, next) => {
     taskId: task._id, meta: { filename: attachment.originalName },
   });
 
-  res.json({ success: true, message: 'Attachment deleted.' });
+  const updatedTask = await Task.findById(req.params.taskId)
+    .populate('assignedTo', 'name avatar')
+    .populate('createdBy', 'name avatar')
+    .lean();
+  res.json({ success: true, data: { task: updatedTask } });
 });
 
 // ─── Time Tracking ────────────────────────────────────────────────────────────
